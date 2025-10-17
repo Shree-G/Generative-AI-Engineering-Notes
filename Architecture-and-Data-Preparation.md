@@ -82,3 +82,45 @@ Before we had transformers, we had other methods for making computers generate t
 	- built with RNNs or LSTMs
 	- designed to handle tasks like translation where input sequence is transformed into an output sequence
 	- attention mechanism allowed model to focus on relevant parts of the input sequence when generating output, improving performance
+
+First coded chatbot interaction LOL:
+```
+You:  what is the sun's age
+
+Chatbot: The sun is about to set on the horizon. It's going to be a beautiful day.
+
+You:  quit
+
+Chatbot: Goodbye!
+```
+- this was with `facebook/blenderbot-400M-distill`
+
+Second coded chatbot interaction...
+```
+You:  what is the age of the sun
+
+Chatbot: 365 days
+
+You:  are you sure
+
+Chatbot: are you sure?
+
+You:  fuck, you got me there.
+```
+- this was with google/flan-t5-base
+
+Third coded chatbot interaction - these are getting funnier and funnier
+```
+You:  what is the age of the sun
+
+Chatbot: 20th century
+
+You:  are you sure
+
+Chatbot: no
+
+You:  valid.
+
+Chatbot: I agree with the sentence.
+```
+- this was with google/flan-t5-small
