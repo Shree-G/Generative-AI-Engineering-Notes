@@ -1,0 +1,1 @@
+Generative AI refers to algorithms that can generate new content, such as text, images, or music, based on learned patterns from existing data.
