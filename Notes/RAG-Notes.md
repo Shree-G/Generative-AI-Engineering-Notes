@@ -79,16 +79,34 @@ How it actually works
 - Instead of passing in the output of prior subquestions to future ones, we just answer each question individually and the concatenate the answer
 - Relevant for problems where the initial prompt contains set of sub-problems where the problems don't depend on each other or aren't related
 
+## Query Translation with more abstraction
 
+### Step Back
+- Asking the LLM to give a more generalized question that the LLM can use as context before answering the actual question
+- Examples of Step-Back questions:
+```python
+examples = [
+    {
+        "input": "Could the members of The Police perform lawful arrests?",
+        "output": "what can the members of The Police do?",
+    },
+    {
+        "input": "Jan Sindel’s was born in what country?",
+        "output": "what is Jan Sindel’s personal history?",
+    },
+]
+```
+- You actually pass these questions as examples to the LLM, as well as pass your original user question and ask it to create a step back question.
+- You retrieve chunks for both the step back question and the actual question, dedupe them, and the give it to the LLM with a system prompt for a final answer.
+- This could be really convenient for domains with very conceptual knowledge based questions to automatically formulate higher level questions
 
-
-
-
-
-
-
-
-
+### HyDE
+- motivation: 
+	- documents are usually long, while questions are usually very short
+	- this might cause the question to be embedded in such a way that it's not close to relevant documents in the high dimensional space
+- to circumvent this, we extrapolate the question into a document, in hopes that it will be closer to documents that are more relevant to it.
+![[Pasted image 20251027224846.png]]
+- this can overcome the challenges of inaccurate retrieval for some domains where there is some knowledge already available on answering specific questions
 
 
 ## Random Shit to Remember:
@@ -131,6 +149,68 @@ final_rag_chain = (
 		- Use `RunnablePassthrough` if the input is the raw value you want to pass (e.g., a string).
     
 - Use `itemgetter("key")` if the input is a dictionary and you want to pass one of its values.
+
+Good example of human ai chatbot conversation format creation to send to llm:
+```python
+from langchain_core.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate
+examples = [
+    {
+        "input": "Could the members of The Police perform lawful arrests?",
+        "output": "what can the members of The Police do?",
+    },
+    {
+        "input": "Jan Sindel’s was born in what country?",
+        "output": "what is Jan Sindel’s personal history?",
+    },
+]
+# We now transform these to example messages
+example_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("human", "{input}"),
+        ("ai", "{output}"),
+    ]
+)
+few_shot_prompt = FewShotChatMessagePromptTemplate(
+    example_prompt=example_prompt,
+    examples=examples,
+)
+prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """You are an expert at world knowledge. Your task is to step back and paraphrase a question to a more generic step-back question, which is easier to answer. Here are a few examples:""",
+        ),
+        # Few shot examples
+        few_shot_prompt,
+        # New question
+        ("user", "{question}"),
+    ]
+)
+```
+- interesting thing is that in LangChain it essentially looks like human chatting with AI format, so this is how you format it for the AI for previous responses
+- `ChatPromptTemplate` is for standard chat prompts, and `FewShotChatMessagePromptTemplate` is for building prompts that include a few examples.
+	- you must use ChatPromptTemplate.from_template() to create a prompt object that can be piped into
+- A `system` message sets the LLM's role and task.
+
+Using custom/lambda functions as a part of your LCEL chain:
+```python
+chain = (
+    {
+        # Retrieve context using the normal question
+        "normal_context": RunnableLambda(lambda x: x["question"]) | retriever,
+        # Retrieve context using the step-back question
+        "step_back_context": generate_queries_step_back | retriever,
+        # Pass on the question
+        "question": lambda x: x["question"],
+    }
+    | response_prompt
+    | ChatOpenAI(temperature=0)
+    | StrOutputParser()
+)
+```
+- use RunnableLambda to pass a function (or lambda function)
+
+
 
 # References
 https://www.youtube.com/watch?v=o126p1QN_RI
