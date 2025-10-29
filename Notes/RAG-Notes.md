@@ -108,6 +108,78 @@ examples = [
 ![[Pasted image 20251027224846.png]]
 - this can overcome the challenges of inaccurate retrieval for some domains where there is some knowledge already available on answering specific questions
 
+## Routing
+- Routing that question based on the content of the question to:
+	- the relevant data source
+	- the correct prompt to use
+	- any other conditional step in the process
+Logical Routing:
+- We give an LLM knowledge of the various data sources/prompts
+- then we let the LLM choose which data source/prompt to use for that specific question
+- We essentially need to constrain the llm to give us a structured output like so:
+```python
+from typing import Literal
+
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_openai import ChatOpenAI
+
+# Data model
+class RouteQuery(BaseModel):
+    """Route a user query to the most relevant datasource."""
+
+    datasource: Literal["python_docs", "js_docs", "golang_docs"] = Field(
+        ...,
+        description="Given a user question choose which datasource would be most relevant for answering their question",
+    )
+
+# LLM with function call 
+llm = ChatOpenAI(model="gpt-3.5-turbo-0125", temperature=0)
+structured_llm = llm.with_structured_output(RouteQuery)
+
+# Prompt 
+system = """You are an expert at routing a user question to the appropriate data source.
+
+Based on the programming language the question is referring to, route it to the relevant data source."""
+
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", system),
+        ("human", "{question}"),
+    ]
+)
+
+# Define router 
+router = prompt | structured_llm
+```
+- we can essentially pass a class with a specified output to the LLM, and have it return us an object of that output
+- The llm.with_structured_output(RouteQuery) method does something special:
+	1. It tells the LLM, "You **must** respond by calling the `RouteQuery` function/tool."
+	2. To do this, it **automatically converts your `RouteQuery` class into a detailed "function-calling" schema** and includes it in the _real_ system prompt sent to the model.
+
+Semantic Routing:
+- we conduct a similarity search on the input question (embedded) and the available prompts (embedded) that we want to use
+- choose to use the prompt with the highest similarity score
+
+## Query Construction
+- using function calling to search for specific fields in the metadata itself
+- ex: 
+	- i ask for research papers published by stanford after 2020.
+	- pass a function in that sets "publisher" : "stanford" and "date-published" : 2020>
+	- searches the vector-db for documents only corresponding to those conditions
+- very convenient as it does meta-data filtering **on the fly**. this is very powerful if you are going to get very structured questions that are metric based
+- how to do this
+	- basically just create a class with optional/required fields and descriptions for each of those fields
+	- pass it into a structured llm call
+
+## Indexing
+
+### Multi-Representation Indexing
+- you take a document, and you distill it in some way, and you embed that distillation which also has a index to a document store where all the documents live
+- this distillation/summary might contain a "crisper", more useful version of a potentially longer document
+- you use this summary to perform similarity search on the embedded question
+- once you get the most similar distillations, you then use the attached index to attach the entire document to that llm call
+- this is specifically useful for long-context llms, as you can give it way more information this way
 
 ## Random Shit to Remember:
 tiktoken_encoder:
@@ -209,8 +281,6 @@ chain = (
 )
 ```
 - use RunnableLambda to pass a function (or lambda function)
-
-
 
 # References
 https://www.youtube.com/watch?v=o126p1QN_RI
