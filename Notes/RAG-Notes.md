@@ -1,3 +1,7 @@
+**2025-10-20 18:35**
+
+Tags: [[professional]]
+
 What is RAG:
 - process of optimizing the output of a large language model
 - references an authoritative knowledge based outside of its training data source
@@ -181,6 +185,90 @@ Semantic Routing:
 - once you get the most similar distillations, you then use the attached index to attach the entire document to that llm call
 - this is specifically useful for long-context llms, as you can give it way more information this way
 
+### Raptor
+- motivation:
+	- some documents require very detailed, fine-grained, low level information
+	- some documents require very broad swathes of information that can be high level that come from many chunks within a document
+	- there's a challenge with retrieval when we fish out some limited number of chunks, where light level information may exceed the number of chunks you retrieve
+- a way to build hierarchal index of document summaries
+- you start with a set of documents, cluster them, and then summarize each cluster
+- you do this recursively until you hit a limit of recursiveness, or you end up with just a single root document that has the most abstract, high level summary of your entire document corpus
+- when you index all of these levels of hierarchal index, you have a very good representation across the high-level to low-level queries
+- better semantic coverage over the abstraction hierarchy
+- great for llms with large context windows
+
+### ColBERT
+- motivation
+	- taking a full document and compressing it into a single vector can possibly be reductive
+	- we need a richer way to store this information
+- tokenize each token for both the document and the question
+- for every token in the question, you compute the max of the similarities of that and the document tokens
+- at the end, you take the sum of the max similarities for every question token and any document token
+- this approach has a lot of latency for higher token windows, but reports high accuracy
+
+# Retrieval
+
+### CRAG
+- basic rag flow is a very linear, we always do the same thing
+- in practice, we have to ask when many questions like
+	- when do we want to retrieve documents if at all
+	- when to re-write questions for better retrieval
+	- when to discard irrelevant retrieved documents and try re-retrieval with maybe an improved question
+- these questions motivate the creation of an **active rag**, where an LLm decided when and what to retrieve based upon retrieval / generation
+- levels of control:
+	- basic: linear flow, no control
+	- intermediate: we use routing through an llm and a tool function to let the llm "choose' what kind of data source it wants to use or what "prompt" it should give
+	- advanced: state machine
+		- we use LLMs to choose between steps within loops. All transition options are now embedded in code
+
+State Machine:
+- state machines essentially contain two things - nodes and edges
+- nodes are functions that change the main state of the graph
+- edges determine which functions get called next based on the output of the previous function
+
+CRAG is a way to approach building an active RAG
+- retrieve documents and grade them
+- if any document exceeds the threshold for relevance, then it proceeds to generation
+- if they're all ambiguous or incorrect, then you retrieve from an external data source such as web search to supplement retrieval
+- how we actually do this:
+	- we define a class called GraphState which will be modified in every node of our graph
+	- this GraphState object just contains a dictionary called keys, but can contain as many variables as you need to keep track of
+	- query an llm to see if the documents that you got from similarity search are actually relevant
+	- if it is not relevant, then use a tool function to go search the web and get articles that are relevant
+	- if it is relevant, just generate with that  tool
+- ex:
+```python
+from langgraph.graph import END, StateGraph, START
+
+workflow = StateGraph(GraphState)
+
+# Define the nodes
+workflow.add_node("retrieve", retrieve)  # retrieve
+workflow.add_node("grade_documents", grade_documents)  # grade documents
+workflow.add_node("generate", generate)  # generate
+workflow.add_node("transform_query", transform_query)  # transform_query
+workflow.add_node("web_search_node", web_search)  # web search
+
+# Build graph
+workflow.add_edge(START, "retrieve")
+workflow.add_edge("retrieve", "grade_documents")
+workflow.add_conditional_edges(
+    "grade_documents",
+    decide_to_generate,
+    {
+        "transform_query": "transform_query",
+        "generate": "generate",
+    },
+)
+workflow.add_edge("transform_query", "web_search_node")
+workflow.add_edge("web_search_node", "generate")
+workflow.add_edge("generate", END)
+
+# Compile
+app = workflow.compile()
+```
+
+
 ## Random Shit to Remember:
 tiktoken_encoder:
 - tiktoken_encoder is the same encoder that OpenAI uses
@@ -281,6 +369,68 @@ chain = (
 )
 ```
 - use RunnableLambda to pass a function (or lambda function)
+
+Using WebBaseLoader, you can load webpages into your RAG
+```python
+from langchain_community.document_loaders import WebBaseLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+loader = WebBaseLoader("https://lilianweng.github.io/posts/2023-06-23-agent/")
+docs = loader.load()
+
+loader = WebBaseLoader("https://lilianweng.github.io/posts/2024-02-05-human-data-quality/")
+docs.extend(loader.load())
+```
+
+.batch()
+```python
+chain = (
+    {"doc": lambda x: x.page_content}
+    | ChatPromptTemplate.from_template("Summarize the following document:\n\n{doc}")
+    | ChatOpenAI(model="gpt-3.5-turbo",max_retries=0)
+    | StrOutputParser()
+)
+
+summaries = chain.batch(docs, {"max_concurrency": 5})
+```
+- runs the chain on the entire docs list in a parallel
+- max_concurrency limits the simultaneous requests to the OpenAI API to avoid rate-limiting
+
+Using a MultiVectorRetriever:
+```python
+from langchain.storage import InMemoryByteStore
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain.retrievers.multi_vector import MultiVectorRetriever
+
+# The vectorstore to use to index the child chunks
+vectorstore = Chroma(collection_name="summaries",
+                     embedding_function=OpenAIEmbeddings())
+
+# The storage layer for the parent documents
+store = InMemoryByteStore()
+id_key = "doc_id"
+
+# The retriever
+retriever = MultiVectorRetriever(
+    vectorstore=vectorstore,
+    byte_store=store,
+    id_key=id_key,
+)
+doc_ids = [str(uuid.uuid4()) for _ in docs]
+
+# Docs linked to summaries
+summary_docs = [
+    Document(page_content=s, metadata={id_key: doc_ids[i]})
+    for i, s in enumerate(summaries)
+]
+
+# Add
+retriever.vectorstore.add_documents(summary_docs)
+retriever.docstore.mset(list(zip(doc_ids, docs)))
+```
+- .mset saves all these key,value pairs into the bytestore
+
 
 # References
 https://www.youtube.com/watch?v=o126p1QN_RI
