@@ -1,7 +1,3 @@
-**2025-10-20 18:35**
-
-Tags: [[professional]]
-
 What is RAG:
 - process of optimizing the output of a large language model
 - references an authoritative knowledge based outside of its training data source
