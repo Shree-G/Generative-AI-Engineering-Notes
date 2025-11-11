@@ -1,7 +1,3 @@
-**2025-10-20 18:35**
-
-Tags: [[professional]]
-
 What is RAG:
 - process of optimizing the output of a large language model
 - references an authoritative knowledge based outside of its training data source
@@ -197,7 +193,7 @@ Semantic Routing:
 - better semantic coverage over the abstraction hierarchy
 - great for llms with large context windows
 
-### ColBERT
+### *ColBERT*
 - motivation
 	- taking a full document and compressing it into a single vector can possibly be reductive
 	- we need a richer way to store this information
@@ -267,6 +263,29 @@ workflow.add_edge("generate", END)
 # Compile
 app = workflow.compile()
 ```
+
+# Adaptive RAG
+- the main idea is you are using unit tests to correct on the fly if the llm system makes a mistake
+- essentially just a way to formalize a logical flowchart
+- For this toy example, here's the diagram we want to follow:
+![[Pasted image 20251029222130.png]]
+How we implement this:
+- build a basic retriever with indexing of your articles
+- build a router that has context of what's inside the vector store
+- the router routes based on the diagram
+- create a pydantic data model called GradeDocuments. This will have a binary store object that is a boolean
+- Use the GradeDocuments object and pass it into a function tool, give it each document that you get when you retrieve documents
+- Then create a function to generate the response
+- Create hallucination and answers question testers
+- After that, put all the pieces together by creating a graph using langgraph.
+
+# Agents vs LangGraph
+- LangGraph is good when you want a less flexible but more reliable model
+	- we use LangGraph when we know the overall flow we need to do to complete a task
+	- can run (even locally!) with relatively small, open-weight models
+- Agents are good when you want more flexible but are fine with compromising on reliability
+	- We want to use agents when the agent needs to make more open-ended judgements
+	- reliability in a production setting is highest when run with large, cloud based models
 
 
 ## Random Shit to Remember:
@@ -430,6 +449,9 @@ retriever.vectorstore.add_documents(summary_docs)
 retriever.docstore.mset(list(zip(doc_ids, docs)))
 ```
 - .mset saves all these key,value pairs into the bytestore
+
+Cohere Command-R
+- is a good fit for RAG, especially Adaptive and Corrective RAGs
 
 
 # References
