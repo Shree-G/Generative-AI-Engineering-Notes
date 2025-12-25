@@ -1,0 +1,333 @@
+# Intro
+- Agent anatomy can be broken down into 3 main parts
+	- Model (the brain)
+	- Tools (the hands)
+	- Orchestration (the conductor)
+- General flow of agent:
+	- the model reasons about which tool is needed for the next step in the process, and the orchestration layer actually calls that tool
+	- the result (the observation) from that tool call is then fed back into the model for future thought cycles
+
+- Model (LLM)
+	- key function: managing the context window
+	- constantly deciding what's important
+	- information comes from the mission, memory, what the tools just did
+	- the model curates the input context window of the LM
+- Tools
+	- the connection to the outside world
+	- APIs, databases, vector stores, code functions
+- Orchestration
+	- manages the operational loop
+	- keeps track of memory or state
+	- manages the reasoning strategy (like chain of thought or ReAct)
+	- ReAct: thinking, acting, observing, then cycle
+- Deployment
+	- hosting the agent on a secure, scalable server
+	- integrating it with tools to make it production ready like monitoring, logging and management
+	- once deployed, can be accessed by users through a frontend or via an Agent to Agent (A2A) API
+
+- if traditional development is like "bricklaying", agentic development is like "directing" or "conducting"
+- an LM's greatest strength being it's flexibility to do *anything* is often an agentic system's greatest weakness, because you are forcing it to do one specific thing
+- Agents are software which manage the inputs of LMs to get work done
+- In essence, an agent is a system dedicated to the art of **what to include in the context window**. The context can include system instructions, user input, session history, long term memories, grounding knowledge from authoritative sources, tools to be used, results of tools already invoked, etc.
+- The sophisticated management of the model's attention allows its reasoning capabilities to problem solve for novel circumstances and accomplish objectives
+
+## The Agentic Problem-Solving Process
+
+What are the specific steps an Agent takes to accomplish it's mission?
+
+1. Get the Mission
+	- can be provided by user prompt
+	- can be provided through automated trigger
+2. Scan the Scene
+	- this step involves gathering context from the environment
+	- more technically, this means the orchestration layer accessing its available resources
+	- ex questions:
+		- "What does the user's request
+		say?", "What information is in my term memory? Did I already try to do this task? Did the
+		user give me guidance last week?", "What can I access from my tools, like calendars,
+		databases, or APIs?"
+3. Think it Through
+	- The model assess it's mission against the available tools and context and comes up with a plan of action
+	- this plan of action is often a chain of reasoning involving sequential tool use
+4. Take Action
+	- Does the first concrete step of the plan (uses the first tool it needs to use)
+5. Observe and Iterate
+	- Observes the output of the tool use (action) and adds that output to the agent's context or memory
+	- Uses that new context to go back to step 3 and repeats steps 3-5 until the mission is complete
+
+# A Taxonomy of Agentic Systems
+
+### Level 0 - Core Reasoning System
+- LM operating in isolation without any tools or ways to access realtime data
+- lack of any real-time awareness, blind to any event or fact outside its training data
+
+### Level 1 -  Connected Problem-Solver
+- LM connected to tools that can interact with it's environment
+- Using 5-step loop defined above, the agent can answer more realtime questions and do more complex tasks
+
+### Level 2 - Strategic Problem-Solver
+- can strategically plan complex, multi-part goals
+- new skill for this level: **context engineering**: the ability for the agent to select, package and include the most relevant and necessary context for the reasoning of the next step
+- context engineering is very important for agent accuracy
+
+### Level 3 - Collaborative Multi-Agent System
+- Basically a team of level 2 agents, however with specific roles and specialties
+- this model directly reflects a human organization, with divisions of labor
+- usually has an orchestrator agent in charge of other agents that delegates tasks
+
+### Level 4 - Self Evolving System
+- A level 3 system, but the ability to edit and create new tools and agents that can serve a purpose that the system sees a need for
+- moves from using a fixed set of resources to actively expanding them
+- this is the current frontier of agentic systems
+
+# Core Agent Architecture
+
+How do we actually build an agent? We split it up into three distinct parts: Model, Tools, and Orchestration
+## Model
+- should not pic the model with the highest benchmark score -not necessarily the best pick model for the task at hand
+- important agentic fundamentals for models are **superior reasoning and reliable tool use**
+- start by defining the business problem, then test models against metrics that directly map to that outcome
+- the "best" model is the one that sits at the optimal intersection of speed, quality and price for your specific task
+- if you have a team of specialists approach, then use heavy reasoning models for initial planning and complex reasoning, then switch to a faster more cost effective model for high volume tasks like classifying user intent or summarizing basic test
+- importantly, the AI landscape is constantly evolving
+	- building for this reality means building a CI/CD pipeline that continuously evaluates new models against key business metrics, so that you can de-risk and accelerate upgrades to your product
+
+## Tools
+- a tool interface is a three-part loop
+	- defining what a tool can do for the LM to read and reason with
+	- invoking the tool itself
+	- observing the result
+
+#### Main types of tools agents use:
+
+Retrieving Information: Grounding in Reality
+- RAG for unstructured data
+- Natural Language to SQL (NL2SQL)
+	- allows agent to query databases to answer analytic questions about the data at hand
+- These types of tools reduce hallucinations because the LM can be grounded in the real data that it uses as context
+
+Executing Actions: Changing the World
+- wrapping existing APIs and code functions as tools
+- for more dynamic tasks, an agent can potentially write and execute code on the fly
+	- such as SQL query or a python script
+- this also includes tool for human interaction, like Human in the Loop (HiTL) frameworks
+	- can pause workflow and ask user for confirmation
+	- request information from a user through a user interface
+
+#### Connecting Tools to Agents
+- there are standards for creating "tools" that agents can use
+- an example of a standard for tool use is the OpenAPI specification, giving the agent a structured contract that describes a tool's purpose, its required parameters and its expected response
+- For simpler, easier discovery and connection to tools, MCP is the standard
+- A few models have native tool use, such as Gemini with google search
+
+## Orchestration
+- central nervous system that connects the model to the tools
+- this is the engine that runs the "think, act, observe loop"
+
+#### Core Design Choices
+1. Determining agent's degree of autonomy
+	- on one end: deterministic workflows that call an LM as a tool for a specific task
+	- on the other end: the LM is in driver's seat, constantly making decisions and executing tasks to achieve a goal
+2. Implementation method
+	- no code builders: speed and accessibility
+	- code first frameworks: control, customizability, and integration
+
+- regardless of approach, the framework should be
+	- open - should be able to use any model without vendor lock in
+	- controllable - the reasoning of the LM is constrained by business logic
+	- observable - a framework that generates traces, logs and exposes reasoning
+
+#### Instruct with Domain Knowledge and Persona
+- most powerful step is to instruct the agent with domain knowledge and a distinct persona
+- this is usually accomplished through a system prompt, telling the LM what role it is playing in the agent architecture - agent's constitution
+	- provide constraints, desired output schema, rules of engagement, a specific tone of voice, and explicit guidance on when and why it should use its tools
+	- example scenarios in the instructions/system prompt is usually very effective as well
+
+#### Augment with Context
+- agent memory is nothing but the added context to the LM context window at runtime
+- short term memory
+	- agent's active scratchpad
+	- maintaining the running history of the current conversation
+	- tracks sequence of Action, Observation pairs from the current loop, providing the immediate context for the model to decide what to do next
+	- can be implemented as state, artifacts, sessions or threads
+- long term memory
+	- persistence **across** sessions
+	- architecturally this is almost always implemented as a RAG
+	- the orchestrator gives the agent the ability to query it's own history, including user preferences or conversations it's had with a user a few weeks ago
+
+#### Multi Agent Systems and Design Patterns
+- Coordinator pattern
+	- introduces a manager agent that analyzes a complex request, segments the primary task and routes each subtask to the appropriate specialist agent
+	- coordinator then aggregates result into the required output schema
+- Sequential pattern
+	- acts as a digital assembly line where the output of one agent becomes the input of another agent
+- Iterative Refinement pattern
+	- creates a feedback loop with the generator agent to create content and the critic agent to evaluate it against quality standards
+- Human in the loop pattern
+	- creates deliberate pauses in the workflow to get human approval before an agent takes a significant action
+
+## Agent Deployment and Services
+- can deploy an agent specific deployment options like vertex AI Agent Engine
+- or can deploy to a legacy traditional deployment runtimes in a docker container like cloud run or gke
+- for agents in production, you should always have CI/CD pipelines and automated testing for your agents
+
+#### Agent Ops
+- traditional unit tests don't work for agentic systems, especially because you cannot simply assert that the `output ==  expected`
+- because language is complicated, it usually requires another LM to evaluate "quality" of the output with the input query or prompt
+- Agent Ops is this new field that deals with the challenges of building, deploying and governing AI agents
+
+#### Measure what matters
+- ask yourself what are the KPIs (Key Performance Indicators) that prove the agent is doing what it is supposed to be doing?
+- these KPIs should be the likes of
+	- goal completion rates
+	- task latency
+	- user satisfaction scores
+	- operational cost per intraction
+	- impact on business goals such as revenue, conversion or customer retention
+- these KPIs will guide testing, and make you do metrics driven development
+
+#### Using an LM as judge
+- creation of evaluation datasets should be built with these metrics
+	- the dataset must cover the full range of use cases that you expect the user to engage with
+	- along with all edge cases that the user can do to break the system
+- eval results should always be reviewed by a domain expert before being accepted as valid
+- the curation and maintenance of these evaluations is becoming a key responsibility for product managers with the support of Domain experts
+
+#### Metrics-Driven Development
+- once you have an automated evaluation suite, testing is simple
+- just run the new version against the same evaluation golden dataset and compare the scores to the existing production version
+- these scores should include latency, cost, and task success rates
+- **important**: for max safety, do A/B deployments to slowly roll out new versions and compare real-world production metrics along with simulation scores such as user feedback and error reporting
+
+#### Debug with OpenTelemetry Traces
+- with traces you can see the exact prompt sent to the model, the model's internal reasoning, the specific tool it chose to call (if any), the parameters it generated for that tool, and the raw data that came back as an observation
+- useful for debugging not for metrics
+- traces can be collected platforms like google cloud trace, or langsmith
+
+#### Cherish Human Feedback
+- when a user files a bug report, save that real world edge case and add it to your automated eval scenarios
+- close the loop by capturing the feedback, replicating the issue, and converting that scenario into a specific permanent test case in your evaluation dataset
+- this ensures you fix the but also vaccinates the system against that entire class of error ever happening again
+
+## Agent Interoperability
+- agents are not tools, there's a difference between connecting to agents vs connecting agents with data and APIs
+#### Agents and Humans
+- most common form of agent-human interaction is a chatbot
+	- user types in a request and agent acts a backend service, processes it and returns a block of text
+	- can provide structured data, like JSON, to power rich, dynamic front-end experiences
+	- human in the loop interaction patterns can include intent refinement, goal expansion, confirmation and clarification requests
+- computer use is where the LM takes control of a user interface often with human interaction and oversight
+- LM can change the UI to meet the needs of the moment
+	- done with tools which control UI (MCP UI, AG UI, A2UI)
+- live, real-time, multimodal communication also exists, to enable bidirectional streaming of users speaking to an agent and interrupting it, just as they would in a natural conversation
+
+#### Agents and Agents
+- core challenge is twofold
+	- discovery - how does my agent find other agents and know what they can do?
+	- communication - what is the standard of communication that both agents know they are going to speak?
+- Agent2Agent (A2A) protocol
+	- allows any agent to publish a digital "business card" known as an Agent Card
+	- agent card = JSON file that has agent's capabilities, its network endpoint, and security credentials required to interact with it
+	- agents communicate using a task-oriented architecture
+		- a client agent sends a task request to a server agent, which then provides **streaming updates** as it works on the problem over a long-running connection
+
+#### Agents and Money
+- giving agents access to money and purchasing power is risky and there are complex issues relating to authorization, authenticity and accountability
+- Agents Payments Protocol (AP2)
+	- has cryptographically-signed digital mandates that act as proof of user intent
+	- creates an audit trail for every transaction
+- x402
+	- open internet payment protocol that uses the HTTP 402 "payment required" status code
+
+## Securing a Agent
+- if you give LM power to do things, then they might do rogue actions or expose sensitive information to third parties
+- best practice is hybrid defense in depth approach
+	- first layer - traditional deterministic guardrails 
+		- set of hardcoded rules that act as security chokepoint
+		- ex: block any purchase more than a $100 
+	- second layer - reasoning-based defenses
+		- training the model to be more resilient to attacks
+		- employing smaller specialized guard models that act like security analysts
+- hybrid model ensures that there are two different types of guardrails always protecting from malicious attacks
+
+#### Agent Identity
+- each agent on the platform must be issued a secure agent identity, that has permissions, service accounts, and more
+- once an agent has a cryptographically verifiable identity, it can be granted agent specific privileges
+	- using standards like SPIFFE
+- ensures that even if a single agent is compromised, its hard for any one agent to deal lasting damage to the system
+- policies can ensure that principals that only need access to a certain permission has access to it
+	- often done at the API governance layer, along with governance supporting MCP and A2A services
+
+#### Securing an Agent in practice
+- clear definition of identities - user account (OAuth), service account (to run code), agent identity (to use delegated authority)
+- establish policies to constrain access to services
+- build guardrails into tools, models and sub-agents to enforce policies
+	- ensures that a tool or sub-agent's own logic will refuse to execute an unsafe action
+- ADK provides callbacks and plugins
+	- callback allows you to inspect the parameters of a tool before it runs
+	- plugins allow you to use LM to screen user inputs and agent outputs for prompt injections or harmful content
+- Model Armor
+	- dedicated service that does all this
+
+## Scaling up from a single agent to fleet of agents
+- lots more security concerns with **agent sprawl**, the complex interactions between many agents, tools and users might cause more security vulnerabilities
+
+#### Security and Privacy
+- possible attacks include
+	- prompt injection
+	- data poisoning to corrupt the information it uses for training or RAG
+- ensure that an enterprise proprietary information is never used to train base models
+- requires input and output filtering
+- contractual protections like intellectual property indemnity for training data and generated output
+
+#### Agent Governance: A Control Plane instead of Sprawl
+- creating a single point of contact (gateway) between agents, tools and users creates observability of every interaction
+- this control plane serves two functions
+	- runtime policy enforcement
+		- handles authentication and authorization
+		- common logs, metrics and traces for every transaction
+	- centralized governance
+		- to enforce policies, the gateway needs a source truth
+		- provided by central registry that has all agentic assets with necessary permissions
+		- allows for security reviews as well as creation of fine-grained policies that dictate which business units can access which agents
+
+#### Cost and Reliability
+- spectrum of infrastructure options for scale-to-zero applications as well as provisioned throughput LM services for always on uptimes
+- choose well!
+
+## Self Evolving Agents
+- agent performance will degrade over time because policies, technologies and data formats are constantly changing
+- manually updating a large fleet of agents is uneconomical and slow
+- design agents that can learn autonomously, improving quality on the job
+
+#### How agents learn and evolve
+- learning process is fueled by:
+	- Runtime Experience
+		- Session logs, traces, and memory that captures successes, failures, tool interactions and decision trajectories.
+		- this includes HiTL feedback which provides authoritative corrections and guidance
+	- External Signals
+		- new external documents such as updated policies, public regulatory guidelines, or critiques from other agents
+- this information is used to optimize agent future behavior
+- instead of summarizing past interactions, advances systems create generalizable artifacts to guide future tasks
+	- Q: does this mean that the agent will edit it's own artifacts when it gets new information from an external source?
+- successful adaptation techniques include:
+	- enhanced context engineering
+		- system refines it's prompts, few-shot examples (?) and information it retrieves from. memory
+		- by optimizing context, increases success rate
+	- tool optimization and creation
+		- when the agent identifies gaps in its capabilities, it creates new tools on the fly by itself
+- this can take shape in the form of a specified **learning agent** that observes entire interactions and sees corrective feedback from the human expert. it then generalizes this feedback into a new reusable guideline for other agents' artifacts or rules
+- also look into RLHF - emerging field with great practical use cases
+
+#### Agent Gym
+- a dedicated space where agents can run in an offline environment with advanced tooling and capabilities
+- not in the execution path - so can use any new and untested tools, features, models, etc.
+- simulation environment, so the agent can "exercise" on new data and learn
+- can call advanced synthetic data generators which guide the simulation to be as real as possible and pressure test the agent
+- open to new tools and capabilities, doesn't need to be as strict and can explore open protocols in a more advanced setting
+- can consult with human domain experts to guide the next set of optimizations
+
+
+# References
+https://www.youtube.com/watch?v=zTxvGzpfF-g
+https://drive.google.com/file/d/1C-HvqgxM7dj4G2kCQLnuMXi1fTpXRdpx/view
