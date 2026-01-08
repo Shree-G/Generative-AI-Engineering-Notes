@@ -327,7 +327,202 @@ Executing Actions: Changing the World
 - open to new tools and capabilities, doesn't need to be as strict and can explore open protocols in a more advanced setting
 - can consult with human domain experts to guide the next set of optimizations
 
+# Day 2
+
+# Tools and Tool Calling
+
+## What do we mean by tool?
+- Two base types of tools:
+	- Allows a model to know something (usually real time)
+	- Allows a model to do something (update a db, calling an API, executing other code, etc.)
+## Types of Tools
+- tool definition declares a contract between the model and the tool
+	- includes clear name, parameters, and a natural language description that explains its purpose and how it should be used
+- Three types of tools explained below
+### Function Tools
+- Tools defined as functions with descriptions and contracts about tool usage - description is provided as part of the request context
+- These are external functions that the model can call as needed
+### Built-in Tools
+- Some LMs have built-in tools, where tool definition is given to model implicitly
+- Gemini API can use google search, code execution, computer use, url context
+### Agent Tools
+- an agent can also be invoked as a tool
+- allows the primary agent to maintain control over the interaction
+- primary agent processes the sub-agent input and output as necessary
+## Taxonomy of Agent Tools
+Another way to categorize agent tools by their primary function:
+- Information Retrieval
+	- structured and unstructured data
+- Action/Execution
+	- real world operations such as sending emails, posting messages, code execution, controlling physical devices
+- System / API Integration
+	- connecting with existing software systems and APIs
+- Human in the loop
+	- seek approval for critical actions
+## Best Practices for Tool Use
+### Documentation is important
+
+Tool documentation (name, description and attributes) are all passed down to the model as part of request context, so important that tools are well documented. Here are some general guidelines:
+- use clear names for function name, parameter names, etc
+- describe all input and output parameters
+	- required type of input and output parameters
+	- how the tool will use the parameter
+- simplify parameter lists to keep them as short as possible
+- clarify tool descriptions
+	- purpose of tool
+	- any details to call the tool effectively
+	- avoid shorthand or technical jargon
+- add targeted examples
+	- can also dynamically retrieve examples related to the immediate task to minimize context bloat
+- provide default values for key parameters
+	- document and describe the default values for these parameters in the tool documentation
+### Describe actions, not implementations
+- model's instructions should describe actions, not when to use specific tools
+	- this is to make sure there is no conflict between the actual tool's instruction set and the model's instruction set - can confuse the LLM
+	- this is also relevant when the list of available tools can change
+- describe what, not how
+	- say "create a big to describe the issue" instead of "use the `create_bug` tool to create the issue"
+- don't duplicate instructions
+	- don't repeat or restate tool instructions or documentation
+	- can create an additional dependency between instructions and tool implementation - if tool changes has to update in two places instead of one
+- don't dictate workflows
+	- describe objective and let the model figure out which tool to use in what order autonomously
+- DO explain tool interactions
+	- if one tool use will affect another tool, document this and explain it to the model
+	- `fetch_web_page` tool may store the retrieved web page in a file - document this somewhere so the agent knows how to access the data
+### Publish tasks, not API calls
+- tools shouldn't just be wrappers around basic API calls
+- tools should instead reflect full end-to-end task workflow that the agent might need to perform
+	- this makes it easier for the agent to know which tool to use
+- APIs are meant for human developers who are building static workflows, so might have hundreds of possible parameters that influence API output.
+- Tools for agents, however, are expected to be used dynamically and on the fly, so if a tool represents a specific task the agent should accomplish, it'll be much more accurate
+### Make tools as granular as possible
+- SRP - define a clear, single responsibility for each tool
+- easier to document the tool and for the agent to know when to use it
+- don't generally create multi-tools
+	- these are complicated to document and maintain, and can be difficult for agents to use consistently
+	- however, if there is a scenario where a common workflow requires many tool calls in a sequence, then it is ok to create that "multi-tool" as long as it is well documented
+### Design for concise output
+- don't return large responses
+	- large tables, dictionaries, files or images can swamp the output context of an LLM
+	- frequently stored in an agent's conversation history, can impact subsequent requests
+- use external systems
+	- if you do need to store large files somewhere, store them in a temp database table so a subsequent tool can retrieve the data directly
+### Use validation effectively
+- use schema validation for tool inputs and outputs whenever possible
+- serve as further documentation of tool's capabilities and function
+- provide a run-time check on the tool operation, allows the app itself to validate whether the tool is being called correctly
+### Provide descriptive error messages
+- the tool's error will also be passed to the LM as output
+- so include descriptive error messages as well as future steps that the LM can take
+	- ex: "No product data found for product ID XXX. Ask the customer to confirm the product name, and look up the product ID by name to confirm you have the correct ID."
+# Model Context Protocol (MCP)
+
+## Core Architectural Components: Hosts, Clients and Servers
+
+**MCP Host**
+- application responsible for creating and managing MCP clients
+- enforces security policies and content guardrails
+
+**MCP Client**
+- the actual component within the host that maintains the connection with the MCP server
+- issues commands, receives responses and manages the lifecycle of the communication session with the MCP server
+
+**MCP Server**
+- A program that provides a set of capabilities that the server dev wants to make available to AI applicationos
+- functions as an adapter for an external tool, data source, or API
+- in enterprise contexts, servers are also responsible for security, scalability and governance
+
+## The Communication Layer: JSON-RPC, Transports, and Message Types
+- Base Protocol: MCP uses JSON-RPC 2.0 as base message format
+- Message Types:
+	- Requests: RPC call that expects a response
+	- Results: message containing the successful outcome to a corresponding request
+	- Errors: A message indicating that a request failed, including a code and description
+	- Notifications: A one-way message that cannot be replied to
+- Transport Mechanisms
+	- stdio
+		- only for local communication
+		- fast, direct communication where MCP server runs as sub-process of Host application
+		- used when tools need to access local resources such as user's filesystem
+	- streamable HTTP
+		- recommended remote client-server protocol
+		- allows stateless servers (standard), with stateful SSE streaming responses (deprecated)
+
+## Key Primitives: Tools and others
+- MCP defines several key concepts and entity types
+- capabilities offered by server to client include Tools, Resources and Prompts
+- capabilities offered by client to server included Sampling, Elicitation, and Roots
+- only tools are 99% supported, most client applications don't support the other capabilities
+
+### Tools
+- The tool entity is a standardized way for server to describe a function it makes available to clients
+- ex: read_file, get_weather, execute_sql, etc.
+- MCP servers publish a list of their available tools with descriptions and parameter schemas for agents to discover
+- Tool definitions must conform to a JSON schema with
+	• name: Unique identifier for the tool
+	• title: [OPTIONAL] human-readable name for display purposes
+	• description: Human- (and LLM-) readable description of functionality
+	• inputSchema: JSON schema defining expected tool parameters
+	• outputSchema: [OPTIONAL]: JSON schema defining output structure
+	• annotations: [OPTIONAL]: Properties describing tool behavior
+- everything in the schema, even the optional things (except annotations), should be included and everything should be carefully worded
+- annotations comprise "hints" that are hints on the MCP tool  behavior. These hints are just hints, and aren't promises of exact behavior
+	• destructiveHint: May perform destructive updates (default: true).
+	• idempotentHint: Calling repeatedly with the same arguments will have no additional
+	effect (default: false).
+	• openWorldHint: May interact with an "open world" of external entities (default: true).
+	• readOnlyHint: Does not modify its environment (default: false)
+	• title: Human-readable title for the tool (note that this is not required to agree with the
+	title as provided in the tool definition).
+
+Tool results can be whatever the MCP server wants
+- can be structured, unstructured
+- contain different content types
+- can link to other resources on server
+- can be returned as single response or stream of responses
+
+Unstructured Content
+- can be text, audio, image
+- can return specified Resources, which can be a link to a entity stored at another URI, or embedded in tool result
+- be cautious of retrieving or using resources returned from an MCP server in this way, should only use Resources from trusted servers
+
+Structured Content
+- always returned as a JSON object
+- can use outputSchema to validate tool results
+
+Error Handling:
+- two standard error reporting mechanisms
+	- can return standard JSON-RPC errors for protocol issues such as unknown tools, invalid arguments, etc
+	- can return error messages in the tool results by setting the `"isError": true` parameter in the result object
+		- usually for errors generated in the operation of the tool itself, like backend API failures, invalid data, business logic errors
+
+### Resources
+- server side capability intended to provide contextual data
+- examples include log files, configuration data, market statistics, or structured blobs such as PDFs or images
+### Prompts
+- allows the server to provide reusable prompt examples or templates related to tools and resources
+- MCP server can give it's clients a higher-level description of how to use the tools it provides
+- there are a lot of security concerns with this
+### Sampling
+- server requests a client-side LLM call
+- gives clients control over security, model type
+- very useful for human in the loop frameworks where the user that is going through the client has to approve or reject something
+- security risks for potential prompt injections
+### Elicitation
+- MCP server requests additional user info from the client
+- queries the host application dynamically for additional data to complete the tool request
+- security concerns once more - servers should not use elicitation to request sensitive information
+- users/clients should be able to approve, decline or cancel the request
+### Roots
+- defines the boundaries of where the servers can operate within the client file system
+- very little guardrails in the spec around the behavior of servers with respect to Roots
+
+
+
+
 
 # References
 https://www.youtube.com/watch?v=zTxvGzpfF-g
 https://drive.google.com/file/d/1C-HvqgxM7dj4G2kCQLnuMXi1fTpXRdpx/view
+https://drive.google.com/file/d/1ENMUDzybOzxnycQQxNh5sE9quRd0s3Sd/view
