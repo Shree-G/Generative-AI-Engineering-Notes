@@ -518,11 +518,314 @@ Error Handling:
 - defines the boundaries of where the servers can operate within the client file system
 - very little guardrails in the spec around the behavior of servers with respect to Roots
 
+# Day 3
 
+# Context Engineering
+- outside LLM training data, their reasoning and awareness are confined to the information in the "context window" of a message/API call
+- agents need instructions, actions, data and contextual conversational information for every task, for every message
+- this assembly and management of information is Context engineering
+- external systems like RAG databases, session stores and memory managers manage a lot of this context
+	- agent framework in charge of orchestrating these systems to retrieve and assemble context
+- goal of context engineering: ensure the model has no more and no less than the most relevant information to complete its task
 
+payload to LM contains:
+- context to guide reasoning
+	- system instructions: agent persona, capabilities, constraints
+	- tool definitions
+	- few-shot examples
+- evidential and factual data
+	- Long-Term Memory: knowledge about the user or topic, gathered across multiple sessions
+	- External Knowledge: information retrieved from db or docs, usually from RAG
+	- Tool/Sub-agent Outputs: data returned from a tool or a sub-agent
+	- artifacts: non-textual data (files, images) associated with the user or session
+- Immediate conversational information
+	- convo history
+	- state / scratchpad / short-term memory: temporary in progress information the agent uses for its immediate reasoning
+	- user prompt
+
+- memories are not static - they must be retrieved and updated based on new user interactions or new data
+- growing conversation history is hard to manage
+	- latency and effectiveness can suffer
+	- context rot - ability of LM to pay attention to critical information suffers due to ever growing context
+	- strategies exist to mutate the hsitory (summarization, pruning, etc)
+
+agent operational context loop:
+![[Pasted image 20260107185922.png]]
+- fetch context
+	- retrieves context such as memories, RAG docs, recent conversation events
+	- will use the user query and other metadata to figure out what information to retrieve
+- prepare context
+	- dynamically constructs the full prompt for the LM call
+	- blocking, bottleneck process: agent cannot proceed until context is ready
+- invoke LM and tools
+	- calls LM and any necessary tools until a final user response is generated
+	- tool and model output is appended to context
+- upload context
+	- new info is uploaded to persistent storage (long term memory)
+# Sessions
+- captures the immediate dialogue history and working memory for a single, continuous conversation
+- sessions are tired to a specific user
+- allows agent to maintain context and provide coherent responses within the bound of a single conversation
+- a user can have multiple sessions, but each session is distinct to the LM
+
+every session contains:
+- events: chronological history of what happened
+	- user input
+	- agent response
+	- tool call
+	- tool output
+- state: working memory/scratchpad
+	- temporary structured data relevant to the current conversation
+
+- as session progresses, agent will append additional events to the session
+- may mutate the state based on logic in agent
+
+- a production agent's execution environment is typically stateless
+- convo history (events) must be saved to persistent storage to maintain continuous user experience
+- db to store and manage sessions, there are solutions for this like Agent Engine Sessions
+## Variance across frameworks and models
+- different agent frameworks implement sessions, events and state in different ways
+- agent frameworks are responsible for maintaining convo history and state for LLMs
+- agent framework acts as a powerful abstraction for developers to work with
+- framework handles mapping conversational data from the internal object (eg. an ADK Event) to the corresponding role and parts in a Content object for a list of Contents before making the API call behind the scenes
+- Google ADK uses explicit Session object and explicit state object
+- LangGraph has all encompassing state object that is mutable
+## Sessions for multi agent systems
+- multiple agents must share information
+- session history is permanent, unabridged transcript of the entire conversation
+- context is carefully crafted information payload sent to LLM for single turn
+- this section focuses on what information is passed across agents, not what context is sent to the LM
+
+two main ways to handle session history
+- shared history where agents contribute to a single log
+	- every agent's message, tool call and observation is appended to one central log in chronological order
+	- best for tightly coupled, collaborative tasks requiring a single source of truth
+	- ex: one agent output is direct input for next agent
+	- linear, sequential workflows
+- separate histories where each agent maintains its own perspective
+	- internal processes such as intermediary thoughts, tool use, reasoning steps are kept within the agent's private log, not visible to others
+	- communication occurs through explicit messages where agent shares final output, not process
+	- implemented using Agent as a tool or Agent to Agent (A2A) protocol
+		- Agent as a tool: one agent invokes another as if it were a standard tool, passing inputs and receiving a final output
+		- A2A protocol: structured protocol for direct messaging
+### Interoperability across multiple agent frameworks
+- an agent built on one framework (google adk) cannot easily share or talk to agents built on other frameworks (langgraph) because of the complexity and differences in implementation
+- possible solution: Agent-to-Agent (A2A) protocol
+	- enables agents to exchange messages, but cannot share rich contextual state
+- robust architectural pattern: abstracting shared knowledge into a framework-agnostic data layer, like Memory
+- Memory layer doesn't have framework specific objects like Events and Messages, designed to hold processed information
+- stored in abstract data structures like strings or dictionaries
+### Production Considerations for Sessions
+
+**Security and Privacy**
+- strict isolation: most critical security principle
+- a session is owned by a single user, one user can never access another user's session data
+- every request to the session store must be authenticated and authorized against the session's owner
+- PII should be redacted before session data is ever written to storage
+
+**Data Integrity and Lifecycle Management**
+- sessions should not live forever
+- implement a Time-to-Live policy that automatically deletes inactive sessions
+- operations appended to the session history must be in deterministic order (chronologically)
+
+**Performance and Scalability**
+- session data is on "hot path" of every user interaction - performance is primary concern
+- agent runtime is stateless, session history retrieved from central db
+- crucial to reduce the size of the data transferred - filter or compact the session history before agent gets it
+### Managing long context conversations: tradeoffs and optimizations
+
+Limitations for latency sensitive applications include
+- Context window limits: max text it can process
+- API costs: shorter convo histories means less tokens sent, less money used
+- Latency: sending more text to the model takes longer ot process, slower response time
+- Quality: as number of tokens increase, performance can get worse because of noise in the context
+
+- managing a long conversation is a game of not adding too much and not adding too little, you need to adjust enough context where the agent has critical pieces of information without shoving in every piece of information that the model can have access to
+- compaction strategies aim to do this by intelligently trimming the history while preserving the most important context
+
+Compaction Strategies:
+- Keep the last N turns: basic sliding window algo
+- Token based truncation: counts the tokens in the messages and cuts off anything older than a defined max token count
+- Recursive summarization: older parts of the conversation are replaced with AI-generated summary
+	- the agent periodically summarizes the oldest messages, so that it has access to at least some form of the history
+- important to do expensive operations like recursive summarization asynchronously, and persist the results
+	- this way, client is not kept waiting and expensive computations such as summarization for a certain amount of messages are not excessively repeated
+	- agent memory manager, that is responsible for these duties must keep track of which events are included in which compacted sumaries
+	- prevents the original events to be needlessly sent to the LLM
+
+Deciding when compaction is necessary:
+- count-based triggers
+	- once convo exceeds certain threshold, it gets summarized
+	- usually "good enough"
+- time-based triggers
+	- lack of activity sets it off, and llm will summarize it
+- event-based triggers
+	- when topic changes or llm detects that the specific task or goal is met
+
+- in essence we're trying to keep the most relevant information while keeping the context window for session transcripts as small as possible
+# Memory
+- sessions are the primary data source for generating memories
+- memories are a key strategy for managing the size of the session
+- **a memory is a condensed representation of all of the session data that is meant to preserve the most important context** - making the agent as useful for future interactions
+- memories are persisted across sessions to provide a continuous user experience
+- memory manager: decoupled service that provides the foundation for multi-agent interoperability
+	- use framework-agnostic data structures, like simple strings and dictionaries
+
+Robust memory system unlocks these capabilities:
+- personalization
+- context window management (session compaction using summarization)
+- data mining across many users - can extract insights from the noise
+- agent self-improvement and adaption
+
+Creating, storing and utilizing memory is collaborative process. Each component has a distinct role to play
+- User: provides raw source data for memories
+- Agent: decides when and what to remember
+	- basic architectures can be implemented so that memory is always retrieved and always triggered to be generated
+	- in advanced architectures, memory can be a tool, where the agent decides when memory should be retrieved or generated
+- Agent Framework (Google ADK, LangGraph): structure and tools for memory interaction
+	- defines the developer logic of accessing conversation history and long-term storage
+- The session storage (Agent Engine Sessions, Spanner, Redis): stores conversation of the session
+- The Memory Manager (Agent Engine Memory Bank, Mem0, Zep): storage, retrieval, and compaction of memories
+	- takes the potential memory identified by the agent and handles its entire lifecycle:
+		- Extraction: takes key information from the source data
+		- Consolidation: curates memories to merge duplicative entities
+		- Storage: persists memory for persistent database
+		- Retrieval: fetches relevant memories to provide context for new interactions
+![[Pasted image 20260109130050.png]]
+- developer can focus on agent's unique logic without having having to build the complex underlying infrastructure for memory persistence
+- memory manager is not just a passive vector database
+	- uses similarity search for retrieval
+	- its core value lies in its ability to intelligently extract, consolidate and curate memories over time
+- use managed memory services to handle the entire lifecycle of memory generation and storage
+
+RAG vs memory management:
+- RAG handles static external data while memory curates dynamic, user-specific context
+- RAG makes an agent an expert on facts, memory makes it an expert on the user
+- RAG is generally shared across all users, memory is scoped per-user to prevent data leaks
+- Write patterns
+	- Batch processing for RAG - triggered via an offline, administrative action
+	- Event-based processing - Triggered at some cadence
+		- end of every turn or session
+		- memory as a tool (agent decides to generate memories)
+- A truly intelligent agent needs both RAG for expert knowledge and memory for expert understanding of the user
+
+## Types of memory
+- An agent's memory can be categorized by the information is stored and how it was captured
+- across al types of memories, memories are descriptive, not predictive
+- a **memory** is an atomic piece of context that is returned by the memory manager and used by the agent as context
+	- the schema and content and metadata
+
+Content
+- substance of the memory that was extracted from the source data
+- framework-agnostic
+- structured or unstructured data
+	- structured data schema is usually defined by the developer, not a specific framework
+	- unstructured memories are natural language descriptions that capture the essence of a longer interaction, event or topic
+
+Metadata:
+- provides context about the memory
+- typically stored as a simple string
+- can include unique identifier for the memory, identifiers for the "owner" of the memory, and labels describing the content or data source of the memory
+### Types of information
+- memories can be classified by the fundamental type of knowledge they represent
+- declarative memories (knowing what)
+	- facts, figures and events
+	- whatever knowledge the agent can explicitly state or declare
+	- general world knowledge and specific user facts
+- procedural memories (knowing how)
+	- knowledge of skills and workflows
+	- demonstrates implicitly how to perform a task correctly
+### Organization patterns
+- three different patterns on how memories are organized
+- Collections
+	- multiple self-contained, natural language memories for a single user
+	- can have multiple collections (each for single high level topics) in a single memory base
+	- best for storing and searching through larger, less structured pool of information related to specific goals or topics
+- Structured user profile
+	- organizes memories as a set of core facts about a user
+	- like a contact card that is continuously updated with relevant information
+	- useful for quick lookups of essential factual information about a user
+- Rolling summary
+	- consolidates all info into a single, long memory
+	- usually AI generated summaries of long sessions, preserving vital info while managing token count
+	- represents a natural language summary of the entire user-agent relationship
+### Storage architectures
+- often stored in vector databases and/or knowledge graphs
+- vector dbs
+	- most common approach
+	- enables retrieval based on semantic similarity rather than exact keywords
+	- excels at retrieving unstructured, natural language memories where context and meaning are key
+- knowledge graphs
+	- memories as network of nodes, and relationships between memories as edges
+	- good for structured relational queries and understanding complex connections within the data
+- hybrid approach
+	- you can use both structured knowledge graph and embed the entities of the knowledge graph into a vector db
+### Creation mechanisms
+- can also classify memories by how they were created
+- Explicit memories: user gives explicit command to agent to remember something
+- Implicit memories: agent infers and extracts information from the conversation without a direct command
+- Internal memory: memory management that is built into the agent framework
+- External memory: separate specialized service dedicated to memory management
+	- agent framework makes API calls to this service to store, retrieve and process memories
+	- also provides more sophisticated features like semantic search, entity extraction, and automatic summarization
+### Memory scope
+- User level scope
+	- memories are tied to a specific user id and persist across all their sessions, allowing the agent to build a long term understanding of their preferences and history
+- session-level scope
+	- compaction of long conversations
+	- creates a persistent record of insights extracted from a single session, so tokens can be saved
+- application level scope
+	- memories accessible by all users of an application
+	- provide shared context
+	- memories need to be sanitized of PII to prevent data leaks between users
+
+### Multimodal memory
+- describes how an agent handles non-textual information
+- distinguish between the data the memory is derived from, and the data the memory is stored as
+- Memory from a multimodal source
+	- takes the multimodal content and transcribes a text description/summary about that to use as a memory
+	- more common, easier to implement
+- Memory containing multimodal content
+	- stores the multimodal content itself as memory
+	- harder to implement, not generally done
+## Memory Generation: Extraction and Consolidation
+- memory consolidation is decided using an LLM, think of it as LLM-driven ETL
+- LLM intelligently decides when to add, update or merge memories
+	- abstracts away the complexity of managing the database contents
+![[Pasted image 20260109155010.png]]
+General process of memory generation:
+- Ingestion: client provides a source of raw data, typically a conversation history
+- Extraction and Filtering
+	- memory manager uses an LLM to extract meaningful content from the source data
+	- LLM only extracts things related to a predefined topic definition (developer defined)
+- Consolidation
+	- uses an LLM to compare then new information with existing memories, and decides to one of the following
+		- merge the new insight into a existing memory
+		- delete an existing memory if invalid
+		- create a new memory if topic is novel
+- Storage
+	- new or updated memory is persisted to a storage layer like a vector db or knowledge graph
+### Memory Extraction deep-dive
+
+The goal of memory extraction is to answer "**What information in the conversation is meaningful enough to become a memory?**"
+
+- "meaningful" is defined entirely by the agent's purpose and use case
+	- what might be meaningful for one use case might not be meaningful for another use case
+- memory manager's LLM decides what to extract by following a set of programmatic guardrails and instructions - usually embedded in a system prompt
+- **schema and template based extraction**
+	- LM is given a predefined JSON output schema that it has to put the memories in from the inputted conversation history
+	- uses features like structured output
+- **natural language topic definitions**
+	- LLM is guided by a simple naturall language description of the topic
+- few-shot examples can "show" the LLM what information to extract using examples
+	- includes several examples of input text and ideal, high-fidelity memory that should be extracted
+	- effective for custom or nuanced topics that are difficult to describe with a schema or simple definition
+- most memory managers work with common topics, but can refine further for custom topics
+- the memory manager can receive a full, unedited conversation, but also can receive a rolling summary of the conversation
 
 
 # References
 https://www.youtube.com/watch?v=zTxvGzpfF-g
 https://drive.google.com/file/d/1C-HvqgxM7dj4G2kCQLnuMXi1fTpXRdpx/view
 https://drive.google.com/file/d/1ENMUDzybOzxnycQQxNh5sE9quRd0s3Sd/view
+https://drive.google.com/file/d/1JW6Q_wwvBjMz9xzOtTldFfPiF7BrdEeQ/view
