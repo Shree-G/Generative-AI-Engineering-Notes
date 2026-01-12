@@ -823,6 +823,206 @@ The goal of memory extraction is to answer "**What information in the conversati
 - most memory managers work with common topics, but can refine further for custom topics
 - the memory manager can receive a full, unedited conversation, but also can receive a rolling summary of the conversation
 
+### Memory Consolidation deep dive
+- most sophisticated stage in the memory lifecycle
+	- transforms a collection of facts into a curated understanding of the user
+- consolidation addresses fundamental problems from conversational data including
+	- information duplication in memories
+	- conflicting information in memories
+	- information evolution
+		- memories might evolve into complex, detailed versions of themselves
+	- memory relevance decay
+		- should prune old, stale and low confidence memories to keep the knowledge base relevant and efficient
+		- can happen through instructing the LLM to defer to newer information during consolidation
+		- or can happen through automatic deletion via time-to-live (TTL)
+
+General workflow of consolidation:
+- tries to retrieve existing memories that are similar to newly extracted memories
+	- uses similarity search for this extraction of existing memories
+- LM is presented with existing memories and new information. can choose to
+	- update
+	- create
+	- delete/invalidate
+- translates the LM's decision into a transaction that updates the memory store
+### Memory Provenance
+- memory provenance: a detailed record of a memory's origin and history
+- we care about memory provenance primarily for the reason of figuring out how relevant, trustworthy and important a memory is
+- we feed memory provenance into an LLM to decide whether a memory is trustworthy or not
+![[Pasted image 20260109163914.png]]
+- a single memory might be a blend of multiple data sources, and a source might be segmented into multiple memories
+- agent must track key details for each source, such as origin (source type) and age (freshness)
+	- these dictate the weight of each source during memory consolidation and during inference
+- source type:
+	- bootstrapped data: information preloaded from internal systems, such as a CRM
+		- very high trust
+		- helpful for cold-start problem (new user, no memories)
+	- explicit user input
+		- high trust
+	- implicit user input
+		- less trustworthy
+	- tool output
+		- generating memories from a tool output is generally not recommended
+		- will go brittle and stale soon
+		- better for short-term caching if necessary to keep around the information for a specific purpose
+
+**Accounting for memory lineage during memory management**
+- primary operational challenges when managing memories: conflict resolution and deleting derived data
+- memory provenance allows the memory manager to establish a hierarchy of trust for its info sources
+- when running into contradictions, the agent will use provenance in this way:
+	- prioritizing the most trusted source
+	- favoring recent information
+	- looking for corroboration across multiple data points
+- when a user revokes access to one data source, data derived from that source should also be removed
+	- should regenerate the affected memories from scratch using only the remaining valid sources
+
+confidence in a memory must be able to be dynamic
+- must increase when multiple data sources provide consistent information
+- must also be able to forget memories as well
+	- time based decay: importance of a memory can decrease over time
+	- low confidence: a memory that was created from weak inference and never corroborated by other sources
+	- irrelevance: agent might determine older, trivial memories, though valid, might not be useful to remember
+
+**Accounting for memory lineage during inference**
+- memory confidence score is critical during inference time
+- memories and their confidence scores should be injected into the prompt, enabling the LLM to assess information reliability and make more nuanced decisions
+- not shown to the user directly
+### Triggering memory generation
+- when should memory generation be triggered?
+	- session completion: at the end of a multi-turn session
+	- turn cadence: running the process after a specified number of turns
+	- real-time: after every single turn
+	- explicit command: user command like "remember this"
+- this is tradeoff between cost and fidelity
+- frequent generation is fresh and detailed, but costly
+- infrequent generation is cheap but risks creating lower-fidelity memories, as the LM must summarize a much larger block of conversation at once
+
+**Memory as a Tool**
+- allows the agent itself to decide when to create a memory
+-  a tool is created with a description of what information might be meaningful enough to create a memory out of
+- shifts the responsibility for identifying meaningful info from the external memory manager to the agent (the developer, YOU!)
+
+**Background vs Blocking Operations**
+- memory generation is an expensive operation that takes time to do
+- should almost always be handled asynchronously as a background process
+- after an agent sends its response to the user, the pipeline can run in parallel
+### Memory Retrieval
+- strategy for memory retrieval depends on how complex the data is and how memories are organized
+	- for a structured user profile, retrieval is just a lookup for the entire user profile or a specific attribute
+	- collection of memories it is far more complex
+- the core challenge for complex retrieval is balancing memory usefulness within a strict latency budget
+- they use
+	- relevance: semantic similarity search
+	- recency
+	- importance: how important is this memory overall?
+		- ex: the user's name or birthdate is ranked as highly important
+			- we don't want this information to decay over time due to recency, so we add importance as well so that if we are choosing between retrieved memories, this filters near the top
+- for applications where accuracy matters a lot
+	- retrieval can use specialized retrievers that use reranking, query rewriting etc.
+	- however, these methods are computationally expensive (latency), so use caching to cache expensive queries for subsequent identical requests
+- ultimately, the best approach with retrieval starts with better memory generation
+#### Timing for retrieval
+When do we retrieve memories? What is the best way to know when to retrieve memories?
+- Proactive Retrieval: memories are automatically loaded at the start of every turn using user query to retrieve relevant memories
+	- latency for turns that don't require memory access, but can be cached to mitigate this cost
+- Reactive retrieval
+	- agent is given a tool to query its memory, deciding for itself when to retrieve context
+	- more efficient and robust, but requires an additional LLM call, increasing cost and latency
+	- agent may not know if relevant information exists to be retrieved
+		- can be mitigated by making the agent aware of the types of memories available in tool's description
+### Inference with Memories
+- once memories retrieved, final step is to strategically place them into the model's context window
+- critical process
+- memories are primarily included in
+	- the system prompt for global memories like a user profile
+	- dialogue injection or memory as a tool for episodic memories that are immediately relevant to the conversation
+
+**Including memories in the system prompt**:
+- append memories to the system instructions
+- keeps conversation history clean
+- frames memories as foundational context for the entire interaction
+- gives memories high authority, but risk of over influence, where the agent might relate every topic back to the memories in its core instructions
+- limitations
+	- framework must support dynamic construction of the system prompt before each LLM call
+	- pattern is incompatible with "memory as a tool" because system prompt must be finalized before the LLM can decide to call a memory retrieval tool
+	- poorly handles non-textual memories
+
+**Including memories in the conversation history**:
+- memories injected directly into the turn-by-turn dialogue
+- either be placed before the convo history or after the latest user query
+- considerations
+	- might be noisy and increase token costs
+	- dialogue injection: model might mistakenly treat a memory as something that was actually said in the conversation
+	- need to be careful about the perspective of memories
+		- if using user role and user-level memories, memories should be written in first person point of view
+- retrieving memories via tool calls
+	- message is included directly in the conversation as part of the tool output
+### Procedural memories
+- storing the how is not an information retrieval problem, it is a reasoning augmentation problem
+- requires a completely separate algorithmic lifecycle
+	- Extraction: requires a specialized prompt to distill a reusable strategy or playbook from a successful interaction
+	- Consolidation: curates the workflow itself
+		- integrates new successful methods with existing best practices
+		- patches flawed steps in a known plan
+		- prunes outdated or ineffective procedures
+	- Retrieval: retrieves a plan of action
+		- might have a completely different data schema than declarative memories
+- similar to RLHF, but procedural memory provides a fast, online adaptation by dynamically injecting the correct playbook into the prompt
+### Testing and Evaluation of memories
+- requires verifying that an agent is remembering the right things (quality), it can find those memories when needed (retrieval) and that using those memories actually helps it accomplish its goals (task success)
+
+**Memory generation quality metrics**: Typically measured by comparing the agent's generated memories against a manually created "golden set" of ideal memories
+- precision
+	- of all memories the agent created, what percentage are accurate and relevant?
+	- high precision guards against an "over-eager" memory system that pollutes the knowledge base with irrelevant noise
+- recall
+	- of all relevant facts it should've remembered from the source, what percentage did it actually capture?
+	- high recall guards against the agent missing critical information
+- F1-score
+	- harmonic mean of precision and recall, providing a single balanced measure of quality
+
+**Memory retrieval performance metrics**: evaluates an agent's ability to find the right memory at the right time, considering the right memory exists
+- Recall@K
+	- when a memory is needed, is the correct one found within the top K retrieved memories
+	- primary measure of a retrieval system accuracy
+- Latency
+	- retrieval is on hot path of agent response
+	- entire retrieval process must execute within a strict latency budget (under 200ms)
+
+**End-to End task success metrics**: Does the memory actually help the agent perform its job better
+- often using LLM as judge to compare the agent's final output to a golden answer
+
+- Evaluation is an engine for continuous improvement
+- iterative process involves
+	- establishing a baseline
+	- analyzing failures
+	- tuning the system
+	- re-evaluating to measure the impact of the changes
+- production readiness also depends on performance and latency
+- generation and consolidation must have enough throughput to keep up with user demand
+### Production considerations for Memory
+- critical concerns for production include scalability, resilience and security
+
+memory generation in production looks like:
+- Agent pushes data
+	- agent makes a non-blocking API call to the memory manager, pushing the raw source data to be processed
+- Memory manager processes in the background
+	- memory manager acknowledges the request and places the generation task in its own internal, managed queue
+- Memories are persisted
+	- The service writes the final memories (new, updates, deletions) to a db
+	- for managed memory managers, storage is built in
+- Agent retrieves memories
+	- agent can query this memory store directly when it needs to retrieve context for a new user interaction
+
+- ensures that failures in memory generation pipeline do not impact the user-facing application
+- system must prevent deadlocks or race conditions when multiple events try to modify the same memory
+- robust message queue is essential to buffer high volumes of events and prevent memory generation service from being overwhelmed
+- should also have failure handling
+	- if LLM call fails, should have retry mechanism
+- should have multi-replication
+### Privacy and security
+- data isolation: memory must be strictly isolated at the user or tenant level
+- use restrictive access control lists (ACL)
+- redact any PII before filing documents that multiple users may use, such as procedural memories
 
 # References
 https://www.youtube.com/watch?v=zTxvGzpfF-g
